@@ -6,24 +6,19 @@
 #include <stdlib.h>
 #include <string>
 #include <process.h>
-#include <openssl/bio.h>
 #include <openssl/ssl.h>
 
 using namespace std;
 
-unsigned WINAPI client_chat(void* a) {
-	SOCKET c = *(SOCKET*)a;
-
+int ssl_client_chat(SSL *ssl){
 	static char c_message[1460] = { "\0", };
 	static char *server_hello = "HTTP/1.1 200 OK\nContent-Length: 5\n\nHello\n\0";
 
-	while (recv(c, c_message, sizeof(c_message), 0) > 0) {
+	while (SSL_read(ssl, c_message, sizeof(c_message)) > 0) {
 		cout << c_message << endl;
 		memset(c_message, '\0', sizeof(c_message));
-		send(c, server_hello, strlen(server_hello), 0);
+		SSL_write(ssl, server_hello, strlen(server_hello));
 	}
-
-	closesocket(c);
 	return 0;
 }
 
@@ -51,6 +46,12 @@ int main(int argc, char* argv[]) {
 	server_addr.sin_family = AF_INET;
 	server_addr.sin_port = htons(atoi(argv[1]));
 	server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	
+	SSL_library_init();				//OpenSSL init
+	SSL_CTX* ctx = SSL_CTX_new(TLSv1_2_server_method());				//TLSv1.2 context create
+
+	SSL_CTX_use_certificate_file(ctx, "C:\\Program Files\\SnoopSpy\\certificate\\test.com.crt", SSL_FILETYPE_PEM);
+	SSL_CTX_use_PrivateKey_file(ctx, "C:\\Program Files\\SnoopSpy\\certificate\\test.com.key", SSL_FILETYPE_PEM);
 
 	if (bind(s, (struct sockaddr *)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {	// bind
 		cout << "Bind error" << endl;
@@ -63,16 +64,19 @@ int main(int argc, char* argv[]) {
 	while (1) {
 		int c_addr_size = sizeof(client_addr);
 		SOCKET c = accept(s, (struct sockaddr *)&client_addr, &c_addr_size);
-		if (c == SOCKET_ERROR) {																// accept
+		if (c == SOCKET_ERROR) {															// accept
 			cout << "Accept error" << endl;
 		}
 
-		char ip[16];
-		inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
-		cout << ip << " connect!" << endl;
-		HANDLE hThread = (HANDLE)_beginthreadex(NULL, 0, client_chat, (void*)&c, 0, NULL);
+		SSL *ssl = SSL_new(ctx);
+		SSL_set_fd(ssl, c);
+		SSL_accept(ssl);
+
+		ssl_client_chat(ssl);
+		SSL_free(ssl);
 	}
 
+	SSL_CTX_free(ctx);
 	closesocket(s);
 	WSACleanup();
 	return 0;
